@@ -16,7 +16,7 @@ Index | Button | Function
   9   |   LS   | Unassigned
   10  |   RS   | Unassigned
 
-Axes
+Axis
 Index | Button | Function
   0   |  LS-X  | Rotate (yaw by default; see Back function)
   1   |  LS-Y  | Ascend/Descend
@@ -44,13 +44,13 @@ class InputProcessor:
         y = 3
         lb = 4
         rb = 5
-        back = 6
+        select = 6
         start = 7
         power = 8
         ls = 9
         rs = 10
     
-    class Axes(Enum):
+    class Axis(Enum):
         ls_x = 0
         ls_y = 1
         lt = 2
@@ -60,6 +60,11 @@ class InputProcessor:
         dpad_x = 6
         dpad_y = 7
 
+    class RotAxis(Enum):
+        pitch = 0
+        roll = 1
+        yaw = 2
+
     def __init__(self):
         self.drive_pub = rospy.Publisher('target_drive', Twist, queue_size=10)
         self.target_drive_msg = Twist()
@@ -67,6 +72,9 @@ class InputProcessor:
         self.target_drive_msg.angular.x = self.target_drive.angular.y = self.target_drive.angular.z = 0.0
         self.target_drive_linear = [0.0, 0.0, 0.0]
         self.target_drive_rot = [0.0, 0.0, 0.0]
+
+        self.__rot_select = self.RotAxis.yaw
+        self.__rot_select_button_prev = False
 
         self.claw_pub = rospy.Publisher('target_claw', Float32, queue_size=10)
         self.target_claw_msg = Twist()
@@ -84,7 +92,6 @@ class InputProcessor:
         self.light_msg = Bool()
         self.light_msg.data = False
         self.__light_button_prev = False
-        self.__light_button_current = False
         self.__target_light_state = False
 
     @staticmethod
@@ -115,10 +122,46 @@ class InputProcessor:
             self.e_stop_msg.data = True
 
             self.light_msg.data = \
-                self.__target_light_state = self.__light_button_current = self.__light_button_prev = False
-        else: # Not in emergency stop state
+                self.__target_light_state = self.__light_button_prev = False
+        else:  # Not in emergency stop state
+            self.e_stop_msg.data = False
+
             self.__update_light_state(buttons[self.Button.start])
-            # TODO continue processing inputs
+            self.light_msg.data = self.__target_light_state
+
+            self.target_drive_linear[0] = self.__bound_number(axes[self.Axis.rs_x], [-1.0, 1.0])
+            self.target_drive_linear[1] = self.__bound_number(-axes[self.Axis.rs_y], [-1.0, 1.0])
+            self.target_drive_linear[2] = self.__bound_number(-axes[self.Axis.ls_y], [-1.0, 1.0])
+            self.target_drive_msg.linear.x = self.target_drive_linear[0]
+            self.target_drive_msg.linear.y = self.target_drive_linear[1]
+            self.target_drive_msg.linear.z = self.target_drive_linear[2]
+
+            self.target_drive_rot[0] = self.__bound_number(axes[self.Axis.dpad_y], [-1.0, 1.0])
+            self.target_drive_rot[1] = self.__bound_number(-axes[self.Axis.dpad_x], [-1.0, 1.0])
+            self.target_drive_rot[2] = 0.0
+            self.__update_rot_select(buttons[self.Button.select])
+            selected_axis_input = self.__bound_number(-axes[self.Axis.ls_y], [-1.0, 1.0])
+            if abs(selected_axis_input) > 0.05:
+                if self.__rot_select == self.RotAxis.pitch:
+                    self.target_drive_rot[0] = selected_axis_input
+                elif self.__rot_select == self.RotAxis.roll:
+                    self.target_drive_rot[1] = selected_axis_input
+                elif self.__rot_select == self.RotAxis.yaw:
+                    self.target_drive_rot[2] = selected_axis_input
+            self.target_drive_msg.angular.x = self.target_drive_rot[0]
+            self.target_drive_msg.angular.y = self.target_drive_rot[1]
+            self.target_drive_msg.angular.z = self.target_drive_rot[2]
+
+            self.target_claw_linear[0] = self.__bound_number(-axes[self.Axis.lt] + axes[self.Axis.rt], [-1.0, 1.0])
+            self.target_claw_msg.linear.x = self.target_claw_linear
+
+            if buttons[self.Button.lb]:
+                self.target_claw_rot[1] = 1.0
+            elif buttons[self.Button.rb]:
+                self.target_claw_rot[1] = -1.0
+            else:
+                self.target_claw_rot[1] = 0.0
+            self.target_claw_msg.angular.y = self.target_claw_rot[1]
 
         # publish constructed ROS messages to their respective topics
         self.drive_pub.publish(self.target_drive_msg)
@@ -153,12 +196,19 @@ class InputProcessor:
         pass
 
     def __update_light_state(self, current_light_input):
-        self.__light_button_prev = self.__light_button_current
-        self.__light_button_current = current_light_input
-        if (self.__light_button_prev == False) and (self.__light_button_current == True):
+        if (self.__light_button_prev == False) and (current_light_input == True):
             self.__target_light_state = not self.__target_light_state
+        self.__light_button_prev = current_light_input
 
-
+    def __update_rot_select(self, rot_select_button_current):
+        if (not self.__rot_select_button_prev) and rot_select_button_current:
+            if self.__rot_select == self.RotAxis.pitch:
+                self.__rot_select = self.RotAxis.roll
+            if self.__rot_select == self.RotAxis.roll:
+                self.__rot_select = self.RotAxis.yaw
+            elif self.__rot_select == self.RotAxis.yaw:
+                self.__rot_select = self.RotAxis.pitch
+        self.__rot_select_button_prev = rot_select_button_current
 
 
 if __name__ == "__main__":
