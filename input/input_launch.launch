@@ -1,0 +1,7 @@
+<launch>
+  <node pkg="joy" name="joy_node" type="joy_node">
+    <remap from="joy" to="joystick" />
+  </node>
+  <node pkg="input" name="input_proc" type="input_proc.py">
+  </node>
+</launch>
